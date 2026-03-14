@@ -1,0 +1,90 @@
+version: "3.9"
+
+services:
+
+  # ──────────────────────────────────────────────
+  # POSTGRESQL — one instance, two databases
+  # ──────────────────────────────────────────────
+  postgres:
+    image: postgres:16
+    container_name: duneinsolite-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: duneinsolite
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-keycloak-db.sql:/docker-entrypoint-initdb.d/init-keycloak-db.sql
+    ports:
+      - "5433:5432"
+    networks:
+      - duneinsolite-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────
+  # KEYCLOAK
+  # ──────────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: duneinsolite-keycloak
+    restart: unless-stopped
+    command: start-dev
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak_db
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: 8180
+      KC_HOSTNAME_STRICT: false
+      KC_HOSTNAME_STRICT_HTTPS: false
+      KC_HTTP_ENABLED: true
+      KC_HTTP_PORT: 8180
+    ports:
+      - "8180:8180"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - duneinsolite-network
+
+  # ──────────────────────────────────────────────
+  # RABBITMQ
+  # ──────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: duneinsolite-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: duneinsolite
+      RABBITMQ_DEFAULT_PASS: duneinsolite123
+    ports:
+      - "5672:5672"       # AMQP port — Spring Boot connects here
+      - "15672:15672"     # Management UI — browser dashboard
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - duneinsolite-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# ──────────────────────────────────────────────
+# VOLUMES & NETWORKS
+# ──────────────────────────────────────────────
+volumes:
+  postgres_data:
+  rabbitmq_data:
+
+networks:
+  duneinsolite-network:
+    driver: bridge

@@ -8,9 +8,9 @@ import java.util.UUID;
 
 public interface NotificationService {
     NotificationResponse createNotification(NotificationRequest request);
-    List<NotificationResponse> getNotificationsByUser(UUID userId);
-    List<NotificationResponse> getUnreadNotificationsByUser(UUID userId);
+  //  List<NotificationResponse> getNotificationsByUser(UUID userId);
+  //  List<NotificationResponse> getUnreadNotificationsByUser(UUID userId);
     NotificationResponse markAsRead(UUID notificationId);
-    void markAllAsRead(UUID userId);
+   // void markAllAsRead(UUID userId);
     void deleteNotification(UUID notificationId);
 }

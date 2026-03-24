@@ -1,14 +1,15 @@
 package com.camping.duneinsolite.controller;
 
-import com.camping.duneinsolite.dto.request.NotificationRequest;
-import com.camping.duneinsolite.dto.response.NotificationResponse;
-import com.camping.duneinsolite.service.NotificationService;
-import jakarta.validation.Valid;
+import com.camping.duneinsolite.model.Notification;
+import com.camping.duneinsolite.repository.NotificationRepository;
+import com.camping.duneinsolite.service.SseService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.http.MediaType;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -17,43 +18,48 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class NotificationController {
 
-    private final NotificationService notificationService;
+    private final SseService sseService;
+    private final NotificationRepository notificationRepository;
 
-    @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'CAMPING')")
-    public ResponseEntity<NotificationResponse> createNotification(@Valid @RequestBody NotificationRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(notificationService.createNotification(request));
+    // frontend calls this ONCE on login
+    // opens a permanent connection
+    // server pushes through this connection whenever needed
+    @GetMapping(value = "/subscribe", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter subscribe(@AuthenticationPrincipal Jwt jwt) {
+        UUID userId = UUID.fromString(jwt.getSubject());
+        return sseService.subscribe(userId);
     }
 
-    @GetMapping("/user/{userId}")
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<List<NotificationResponse>> getByUser(@PathVariable UUID userId) {
-        return ResponseEntity.ok(notificationService.getNotificationsByUser(userId));
+    // get all notifications for bell icon history
+    @GetMapping
+    public List<Notification> getMyNotifications(@AuthenticationPrincipal Jwt jwt) {
+        UUID userId = UUID.fromString(jwt.getSubject());
+        return notificationRepository.findByUser_UserIdOrderByCreatedAtDesc(userId);
     }
 
-    @GetMapping("/user/{userId}/unread")
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<List<NotificationResponse>> getUnreadByUser(@PathVariable UUID userId) {
-        return ResponseEntity.ok(notificationService.getUnreadNotificationsByUser(userId));
+    // unread count for the red badge on bell icon
+    @GetMapping("/unread-count")
+    public long getUnreadCount(@AuthenticationPrincipal Jwt jwt) {
+        UUID userId = UUID.fromString(jwt.getSubject());
+        return notificationRepository.countByUser_UserIdAndIsReadFalse(userId);
     }
 
+    // mark one notification as read when user clicks it
     @PatchMapping("/{notificationId}/read")
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<NotificationResponse> markAsRead(@PathVariable UUID notificationId) {
-        return ResponseEntity.ok(notificationService.markAsRead(notificationId));
+    public void markAsRead(@PathVariable UUID notificationId) {
+        notificationRepository.findById(notificationId).ifPresent(n -> {
+            n.setIsRead(true);
+            notificationRepository.save(n);
+        });
     }
 
-    @PatchMapping("/user/{userId}/read-all")
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<Void> markAllAsRead(@PathVariable UUID userId) {
-        notificationService.markAllAsRead(userId);
-        return ResponseEntity.noContent().build();
-    }
-
-    @DeleteMapping("/{notificationId}")
-    @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<Void> deleteNotification(@PathVariable UUID notificationId) {
-        notificationService.deleteNotification(notificationId);
-        return ResponseEntity.noContent().build();
+    // mark all as read when user opens the bell dropdown
+    @PatchMapping("/read-all")
+    public void markAllAsRead(@AuthenticationPrincipal Jwt jwt) {
+        UUID userId = UUID.fromString(jwt.getSubject());
+        List<Notification> unread = notificationRepository
+                .findByUser_UserIdAndIsReadFalse(userId);
+        unread.forEach(n -> n.setIsRead(true));
+        notificationRepository.saveAll(unread);
     }
 }

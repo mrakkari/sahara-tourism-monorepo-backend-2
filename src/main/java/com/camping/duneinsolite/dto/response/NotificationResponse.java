@@ -8,6 +8,7 @@ import java.util.UUID;
 @Data
 public class NotificationResponse {
     private UUID notificationId;
+    private UUID reservationId;
     private NotificationType type;
     private String title;
     private String message;

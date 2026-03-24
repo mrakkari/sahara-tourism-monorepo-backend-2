@@ -39,19 +39,19 @@ public class NotificationServiceImpl implements NotificationService {
         return notificationMapper.toResponse(notificationRepository.save(notification));
     }
 
-    @Override
-    @Transactional(readOnly = true)
-    public List<NotificationResponse> getNotificationsByUser(UUID userId) {
-        return notificationRepository.findByUserUserId(userId).stream()
-                .map(notificationMapper::toResponse).toList();
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<NotificationResponse> getUnreadNotificationsByUser(UUID userId) {
-        return notificationRepository.findByUserUserIdAndIsReadFalse(userId).stream()
-                .map(notificationMapper::toResponse).toList();
-    }
+//    @Override
+//    @Transactional(readOnly = true)
+//    public List<NotificationResponse> getNotificationsByUser(UUID userId) {
+//        return notificationRepository.findByUserUserId(userId).stream()
+//                .map(notificationMapper::toResponse).toList();
+//    }
+//
+//    @Override
+//    @Transactional(readOnly = true)
+//    public List<NotificationResponse> getUnreadNotificationsByUser(UUID userId) {
+//        return notificationRepository.findByUserUserIdAndIsReadFalse(userId).stream()
+//                .map(notificationMapper::toResponse).toList();
+//    }
 
     @Override
     public NotificationResponse markAsRead(UUID notificationId) {
@@ -61,11 +61,11 @@ public class NotificationServiceImpl implements NotificationService {
         return notificationMapper.toResponse(notificationRepository.save(notification));
     }
 
-    @Override
-    public void markAllAsRead(UUID userId) {
-        notificationRepository.findByUserUserIdAndIsReadFalse(userId)
-                .forEach(n -> n.setIsRead(true));
-    }
+//    @Override
+//    public void markAllAsRead(UUID userId) {
+//        notificationRepository.findByUserUserIdAndIsReadFalse(userId)
+//                .forEach(n -> n.setIsRead(true));
+//    }
 
     @Override
     public void deleteNotification(UUID notificationId) {

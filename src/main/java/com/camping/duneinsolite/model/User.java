@@ -3,6 +3,7 @@ package com.camping.duneinsolite.model;
 
 import com.camping.duneinsolite.model.enums.LoyaltyTier;
 import com.camping.duneinsolite.model.enums.UserRole;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.UuidGenerator;
@@ -67,5 +68,6 @@ public class User {
     // One user can have many notifications
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
+    @JsonIgnore
     private List<Notification> notifications = new ArrayList<>();
 }

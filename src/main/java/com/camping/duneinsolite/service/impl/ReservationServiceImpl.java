@@ -1,5 +1,7 @@
 package com.camping.duneinsolite.service.impl;
 
+import com.camping.duneinsolite.config.RabbitMQConfig;
+import com.camping.duneinsolite.dto.message.NotificationMessage;
 import com.camping.duneinsolite.dto.request.ReservationRequest;
 import com.camping.duneinsolite.dto.request.ReservationUpdateRequest;
 import com.camping.duneinsolite.dto.request.TourTypeSelectionRequest;
@@ -7,9 +9,11 @@ import com.camping.duneinsolite.dto.response.ReservationResponse;
 import com.camping.duneinsolite.exception.ReservationStatusException;
 import com.camping.duneinsolite.mapper.ReservationMapper;
 import com.camping.duneinsolite.model.*;
+import com.camping.duneinsolite.model.enums.NotificationType;
 import com.camping.duneinsolite.model.enums.ReservationStatus;
 import com.camping.duneinsolite.model.enums.UserRole;
 import com.camping.duneinsolite.repository.*;
+import com.camping.duneinsolite.service.NotificationPublisher;
 import com.camping.duneinsolite.service.ReservationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -39,6 +43,7 @@ public class ReservationServiceImpl implements ReservationService {
     private final TourTypeRepository tourTypeRepository;
     private final ExtraRepository extraRepository;
     private final ReservationMapper reservationMapper;
+    private final NotificationPublisher notificationPublisher;
 
     @Override
     public ReservationResponse createReservation(ReservationRequest request) {
@@ -192,7 +197,20 @@ public class ReservationServiceImpl implements ReservationService {
         reservation.setTotalExtrasAmount(reservation.calculateTotalExtrasAmount());
 
 
-        return reservationMapper.toResponse(reservationRepository.save(reservation));
+        Reservation savedReservation = reservationRepository.save(reservation);
+        notificationPublisher.publish(
+                RabbitMQConfig.RESERVATION_CREATED,
+                NotificationMessage.builder()
+                        .targetRoles(List.of(UserRole.ADMIN))
+                        .type(NotificationType.RESERVATION_CREATED)
+                        .reservationId(savedReservation.getReservationId())
+                        .title("Nouvelle réservation")
+                        .message("Le groupe \"" + savedReservation.getGroupName()
+                                + "\" a soumis une demande de réservation.")
+                        .reservationId(savedReservation.getReservationId())
+                        .build()
+        );
+        return reservationMapper.toResponse(savedReservation);
     }
     @Override
     @Transactional(readOnly = true)
@@ -282,7 +300,60 @@ public class ReservationServiceImpl implements ReservationService {
             reservation.setRejectionReason(rejectionReason);
         }
 
-        return reservationMapper.toResponse(reservationRepository.save(reservation));
+        Reservation savedReservation = reservationRepository.save(reservation);
+// ── CONFIRMED ─────────────────────────────────────────────────
+        if (status == ReservationStatus.CONFIRMED) {
+
+            // notify owner
+            notificationPublisher.publish(
+                    RabbitMQConfig.RESERVATION_CONFIRMED,
+                    NotificationMessage.builder()
+                            .targetUserId(savedReservation.getUser().getUserId())
+                            .type(NotificationType.RESERVATION_CONFIRMED)
+                            .reservationId(savedReservation.getReservationId())
+                            .title("Réservation confirmée")
+                            .message("Votre réservation pour le groupe \""
+                                    + savedReservation.getGroupName() + "\" a été confirmée.")
+                            .reservationId(savedReservation.getReservationId())
+                            .build()
+            );
+
+            // notify ALL CAMPING
+            notificationPublisher.publish(
+                    RabbitMQConfig.RESERVATION_CONFIRMED,
+                    NotificationMessage.builder()
+                            .targetRoles(List.of(UserRole.CAMPING))
+                            .type(NotificationType.RESERVATION_CONFIRMED)
+                            .reservationId(savedReservation.getReservationId())
+                            .title("Nouvelle réservation confirmée")
+                            .message("Le groupe \"" + savedReservation.getGroupName()
+                                    + "\" arrive le " + savedReservation.getCheckInDate())
+                            .reservationId(savedReservation.getReservationId())
+                            .build()
+            );
+        }
+
+// ── REJECTED — completely separate, outside CONFIRMED ─────────
+        if (status == ReservationStatus.REJECTED) {
+            notificationPublisher.publish(
+                    RabbitMQConfig.RESERVATION_REJECTED,
+                    NotificationMessage.builder()
+                            .targetUserId(savedReservation.getUser().getUserId())
+                            .type(NotificationType.RESERVATION_REJECTED)
+                            .title("Réservation rejetée")
+                            .reservationId(savedReservation.getReservationId())
+                            .message("Votre réservation pour le groupe \""
+                                    + savedReservation.getGroupName()
+                                    + "\" a été rejetée."
+                                    + (savedReservation.getRejectionReason() != null
+                                    ? " Raison: " + savedReservation.getRejectionReason()
+                                    : ""))
+                            .reservationId(savedReservation.getReservationId())
+                            .build()
+            );
+        }
+
+        return reservationMapper.toResponse(savedReservation);
     }
 
     @Override
@@ -463,7 +534,22 @@ public class ReservationServiceImpl implements ReservationService {
             reservation.setTotalExtrasAmount(reservation.calculateTotalExtrasAmount());
         }
 
-        return reservationMapper.toResponse(reservationRepository.save(reservation));
+        // ── 9. Notify admin that reservation was updated ──────────────
+        Reservation savedReservation = reservationRepository.save(reservation);
+
+        notificationPublisher.publish(
+                RabbitMQConfig.RESERVATION_UPDATED,
+                NotificationMessage.builder()
+                        .targetRoles(List.of(UserRole.ADMIN))
+                        .type(NotificationType.RESERVATION_UPDATED)
+                        .reservationId(savedReservation.getReservationId())
+                        .title("Réservation modifiée")
+                        .message("Le groupe \"" + savedReservation.getGroupName()
+                                + "\" a modifié sa réservation. En attente de reconfirmation.")
+                        .build()
+        );
+
+        return reservationMapper.toResponse(savedReservation);
     }
 
     @Override

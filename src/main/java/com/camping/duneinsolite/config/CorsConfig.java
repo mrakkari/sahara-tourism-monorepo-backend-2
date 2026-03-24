@@ -30,4 +30,12 @@ public class CorsConfig {
         source.registerCorsConfiguration("/**", config);
         return source;
     }
+    // add to SecurityConfig or any @Configuration class
+    @Bean
+    public org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer asyncConfigurer() {
+        org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer configurer =
+                new org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer();
+        configurer.setDefaultTimeout(-1); // no timeout for SSE
+        return configurer;
+    }
 }

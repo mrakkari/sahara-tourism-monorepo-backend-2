@@ -25,5 +25,5 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     // ── Used by admin/management ──────────────────────────────────────────
     List<User> findByRole(UserRole role);
     List<User> findAllByRole(UserRole role);
-
+    List<User> findByRoleIn(List<UserRole> roles);
 }

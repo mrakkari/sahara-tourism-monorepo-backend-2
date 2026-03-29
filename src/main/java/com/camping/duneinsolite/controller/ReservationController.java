@@ -24,7 +24,7 @@ public class ReservationController {
     private final ReservationService reservationService;
 // ajoute d'une extras de la 1 ere fois
     @PostMapping
-    @PreAuthorize("hasAnyRole('CLIENT', 'PARTENAIRE')")
+    @PreAuthorize("hasAnyRole('CLIENT', 'PARTENAIRE','ADMIN', 'CAMPING')")
     public ResponseEntity<ReservationResponse> createReservation(@Valid @RequestBody ReservationRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(reservationService.createReservation(request));
     }

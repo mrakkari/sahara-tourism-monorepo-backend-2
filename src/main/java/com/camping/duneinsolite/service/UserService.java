@@ -3,6 +3,8 @@ package com.camping.duneinsolite.service;
 
 import com.camping.duneinsolite.dto.request.UserRequest;
 import com.camping.duneinsolite.dto.response.UserResponse;
+import com.camping.duneinsolite.model.enums.UserRole;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -13,4 +15,5 @@ public interface UserService {
     List<UserResponse> getAllUsers();
     UserResponse updateUser(UUID userId, UserRequest request);
     void deleteUser(UUID userId);
+    List<UserResponse> getUsersByRoles(List<UserRole> roles);
 }

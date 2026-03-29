@@ -86,4 +86,13 @@ public class UserServiceImpl implements UserService {
         return userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found: " + userId));
     }
+    // Add this to your UserServiceImpl, alongside getAllUsers()
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<UserResponse> getUsersByRoles(List<UserRole> roles) {
+        return userRepository.findByRoleIn(roles).stream()
+                .map(userMapper::toResponse)
+                .toList();
+    }
 }

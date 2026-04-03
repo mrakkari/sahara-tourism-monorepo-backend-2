@@ -1,6 +1,5 @@
 package com.camping.duneinsolite.dto.request;
 
-
 import com.camping.duneinsolite.model.enums.UserRole;
 import jakarta.validation.constraints.*;
 import lombok.Data;
@@ -15,7 +14,7 @@ public class UserRequest {
     @Email(message = "Email must be valid")
     private String email;
 
-    @NotBlank(message = "Password is required")
+    // Password is optional here — if null, a random one is generated (admin flow)
     @Size(min = 8, message = "Password must be at least 8 characters")
     private String password;
 
@@ -24,7 +23,7 @@ public class UserRequest {
     @NotNull(message = "Role is required")
     private UserRole role;
 
-    // Only required when role = PARTENAIRE
-    private String taxId;
-    private Double commissionRate;
+    // Only relevant when role = PARTENAIRE
+    private String matriculeFiscal;
+    private String agencyAddress;
 }

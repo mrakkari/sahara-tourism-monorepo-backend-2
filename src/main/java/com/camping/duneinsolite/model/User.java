@@ -49,11 +49,11 @@ public class User {
     private LoyaltyTier loyaltyTier = LoyaltyTier.BRONZE;
 
     // Only relevant when role = PARTENAIRE
-    @Column(name = "tax_id")
-    private String taxId;
+    @Column(name = "matricule_fiscal")
+    private String matriculeFiscal;
 
-    @Column(name = "commission_rate")
-    private Double commissionRate;
+    @Column(name = "agency_address")
+    private String agencyAddress;
 
     // One user can have many reservations
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = false)

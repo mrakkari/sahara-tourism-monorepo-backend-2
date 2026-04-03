@@ -1,6 +1,7 @@
 package com.camping.duneinsolite.dto.response;
 
 import com.camping.duneinsolite.model.enums.ReservationStatus;
+import com.camping.duneinsolite.model.enums.ReservationType;
 import lombok.Data;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -13,8 +14,10 @@ public class ReservationResponse {
     private UUID userId;
     private String userName;
     private String source;
+    private ReservationType reservationType;
     private LocalDate checkInDate;
     private LocalDate checkOutDate;
+    private LocalDate serviceDate;
     private String groupName;
     private String groupLeaderName;
     private Integer numberOfAdults;
@@ -25,7 +28,8 @@ public class ReservationResponse {
     private String currency;
     private String promoCode;
     private String demandeSpecial;
-    private List<ReservationTourTypeResponse> tourTypes;  // ← now snapshots
+    private List<ReservationTourTypeResponse> tourTypes;
+    private List<ReservationTourResponse> tours;
     private List<ParticipantResponse> participants;
     private List<ReservationExtraResponse> extras;
     private Double totalExtrasAmount;

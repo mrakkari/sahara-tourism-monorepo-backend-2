@@ -1,6 +1,6 @@
 package com.camping.duneinsolite.dto.request;
 
-
+import com.camping.duneinsolite.model.enums.ReservationType;
 import jakarta.validation.constraints.*;
 import lombok.Data;
 import java.time.LocalDate;
@@ -15,11 +15,17 @@ public class ReservationRequest {
 
     private String source;
 
-    @NotNull(message = "Check-in date is required")
+    @NotNull(message = "Reservation type is required")
+    private ReservationType reservationType;
+
+    // Nullable — required only for HEBERGEMENT (validated in service)
     private LocalDate checkInDate;
 
-    @NotNull(message = "Check-out date is required")
+    // Nullable — required only for HEBERGEMENT (validated in service)
     private LocalDate checkOutDate;
+
+    // Nullable — required only for EXTRAS (validated in service)
+    private LocalDate serviceDate;
 
     private String groupName;
     private String groupLeaderName;
@@ -36,8 +42,11 @@ public class ReservationRequest {
     private String promoCode;
     private String demandeSpecial;
 
-    @NotEmpty(message = "At least one tour type is required")
+    // Required for HEBERGEMENT — validated in service
     private List<TourTypeSelectionRequest> tourTypes;
+
+    // Required for TOURS (exactly 1) — validated in service
+    private List<TourSelectionRequest> tours;
 
     private List<ParticipantRequest> participants;
     private List<ReservationExtraRequest> extras;

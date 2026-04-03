@@ -127,4 +127,26 @@ public class GlobalExceptionHandler {
                 null
         );
     }
+
+    // ── Handle user not found ─────────────────────────────────────────────
+    @ExceptionHandler(UserNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleUserNotFound(UserNotFoundException ex) {
+        return buildResponse(HttpStatus.NOT_FOUND, ex.getMessage(), null);
+    }
+
+    // ── Handle duplicate email ────────────────────────────────────────────
+    @ExceptionHandler(EmailAlreadyInUseException.class)
+    public ResponseEntity<Map<String, Object>> handleEmailConflict(EmailAlreadyInUseException ex) {
+        return buildResponse(HttpStatus.CONFLICT, ex.getMessage(), null); // 409
+    }
+
+    // ── Handle Keycloak sync failures ────────────────────────────────────
+    @ExceptionHandler(KeycloakSyncException.class)
+    public ResponseEntity<Map<String, Object>> handleKeycloakSync(KeycloakSyncException ex) {
+        return buildResponse(
+                HttpStatus.BAD_GATEWAY,   // 502 — external service failed
+                "Identity provider sync failed: " + ex.getMessage(),
+                null
+        );
+    }
 }

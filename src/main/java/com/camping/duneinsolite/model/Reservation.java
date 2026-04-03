@@ -1,6 +1,7 @@
 package com.camping.duneinsolite.model;
 
 import com.camping.duneinsolite.model.enums.ReservationStatus;
+import com.camping.duneinsolite.model.enums.ReservationType;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.UuidGenerator;
@@ -29,11 +30,21 @@ public class Reservation {
     @Column(name = "source")
     private String source;
 
-    @Column(name = "check_in_date", nullable = false)
+    @Enumerated(EnumType.STRING)
+    @Column(name = "reservation_type", nullable = false)
+    private ReservationType reservationType;
+
+    // Nullable — only required for HEBERGEMENT type
+    @Column(name = "check_in_date")
     private LocalDate checkInDate;
 
-    @Column(name = "check_out_date", nullable = false)
+    // Nullable — only required for HEBERGEMENT type
+    @Column(name = "check_out_date")
     private LocalDate checkOutDate;
+
+    // Nullable — only required for EXTRAS type
+    @Column(name = "service_date")
+    private LocalDate serviceDate;
 
     @Column(name = "group_name")
     private String groupName;
@@ -57,6 +68,7 @@ public class Reservation {
     @Column(name = "rejection_reason", columnDefinition = "TEXT")
     private String rejectionReason;
 
+    // Null for EXTRAS type — stores TourType or Tour total only
     @Column(name = "total_amount")
     private Double totalAmount;
 
@@ -66,6 +78,7 @@ public class Reservation {
 
     @Column(name = "promo_code")
     private String promoCode;
+
     @Column(name = "total_extras_amount")
     @Builder.Default
     private Double totalExtrasAmount = 0.0;
@@ -73,43 +86,32 @@ public class Reservation {
     @Column(name = "demande_special", columnDefinition = "TEXT")
     private String demandeSpecial;
 
-    // ──────────────────────────────────────────────
-    // RELATIONS — ReservationTourTypes (One-to-Many)
-    // replaces the old @ManyToMany with TourType
-    // ──────────────────────────────────────────────
-
+    // ── HEBERGEMENT — TourTypes ───────────────────────────────────
     @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<ReservationTourType> tourTypes = new ArrayList<>();
 
-    // ──────────────────────────────────────────────
-    // RELATIONS — Participants (One-to-Many)
-    // ──────────────────────────────────────────────
+    // ── TOURS — ReservationTour ───────────────────────────────────
+    @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<ReservationTour> tours = new ArrayList<>();
 
+    // ── Participants ──────────────────────────────────────────────
     @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<Participant> participants = new ArrayList<>();
 
-    // ──────────────────────────────────────────────
-    // RELATIONS — ReservationExtras (One-to-Many)
-    // ──────────────────────────────────────────────
-
+    // ── Extras ────────────────────────────────────────────────────
     @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<ReservationExtra> extras = new ArrayList<>();
 
-    // ──────────────────────────────────────────────
-    // RELATIONS — Invoices (One-to-Many)
-    // ──────────────────────────────────────────────
-
+    // ── Invoices ──────────────────────────────────────────────────
     @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<Invoice> invoices = new ArrayList<>();
 
-    // ──────────────────────────────────────────────
-    // RELATIONS — Transactions (One-to-Many)
-    // ──────────────────────────────────────────────
-
+    // ── Transactions ──────────────────────────────────────────────
     @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = false)
     @Builder.Default
     private List<Transaction> transactions = new ArrayList<>();
@@ -125,9 +127,7 @@ public class Reservation {
         this.createdAt = LocalDateTime.now();
     }
 
-    // ──────────────────────────────────────────────
-    // HELPER METHODS
-    // ──────────────────────────────────────────────
+    // ── Helper methods ────────────────────────────────────────────
 
     public void addTourType(ReservationTourType tourType) {
         tourTypes.add(tourType);
@@ -137,6 +137,16 @@ public class Reservation {
     public void removeTourType(ReservationTourType tourType) {
         tourTypes.remove(tourType);
         tourType.setReservation(null);
+    }
+
+    public void addTour(ReservationTour tour) {
+        tours.add(tour);
+        tour.setReservation(this);
+    }
+
+    public void removeTour(ReservationTour tour) {
+        tours.remove(tour);
+        tour.setReservation(null);
     }
 
     public void addParticipant(Participant participant) {
@@ -178,6 +188,12 @@ public class Reservation {
     public Double calculateTotalTourTypesAmount() {
         return tourTypes.stream()
                 .mapToDouble(ReservationTourType::getTotalPrice)
+                .sum();
+    }
+
+    public Double calculateTotalToursAmount() {
+        return tours.stream()
+                .mapToDouble(ReservationTour::getTotalPrice)
                 .sum();
     }
 }

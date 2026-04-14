@@ -84,4 +84,12 @@ public class ReservationController {
                 .getAuthentication().getName(); // gets the userId from the JWT
         return ResponseEntity.ok(reservationService.getMyReservations(UUID.fromString(userId)));
     }
+
+    @GetMapping("/search")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAMPING')")
+    public ResponseEntity<List<ReservationResponse>> searchByName(
+            @RequestParam String name) {
+        return ResponseEntity.ok(reservationService.searchReservationsByName(name));
+    }
 }
+

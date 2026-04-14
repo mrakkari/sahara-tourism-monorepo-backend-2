@@ -18,4 +18,5 @@ public interface ReservationService {
     ReservationResponse updateReservation(UUID reservationId, ReservationUpdateRequest request);
     void deleteReservation(UUID reservationId);
     List<ReservationResponse> getMyReservations(UUID userId);
+    List<ReservationResponse> searchReservationsByName(String name);
 }

@@ -30,7 +30,19 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
-
+ import com.camping.duneinsolite.model.Invoice;
+ import com.camping.duneinsolite.model.InvoiceItem;
+ import com.camping.duneinsolite.model.Transaction;
+ import com.camping.duneinsolite.model.enums.InvoiceStatus;
+ import com.camping.duneinsolite.model.enums.InvoiceType;
+ import com.camping.duneinsolite.model.enums.PaymentStatus;
+ import com.camping.duneinsolite.dto.response.PaymentSummary;
+ import com.camping.duneinsolite.dto.response.TransactionResponse;
+ import com.camping.duneinsolite.repository.InvoiceRepository;
+ import com.camping.duneinsolite.repository.TransactionRepository;
+ import com.camping.duneinsolite.service.PaymentService;
+ import com.camping.duneinsolite.mapper.TransactionMapper;
+ import java.util.Comparator;
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -43,6 +55,11 @@ public class ReservationServiceImpl implements ReservationService {
     private final TourRepository             tourRepository;
     private final ReservationMapper          reservationMapper;
     private final NotificationPublisher      notificationPublisher;
+    private final PaymentService paymentService;
+    private final TransactionMapper transactionMapper;
+    private final TransactionRepository transactionRepository;
+    private final InvoiceRepository invoiceRepository;
+
 
     // ─────────────────────────────────────────────────────────────
     // CREATE
@@ -262,7 +279,19 @@ public class ReservationServiceImpl implements ReservationService {
                         .build()
         );
 
-        return reservationMapper.toResponse(savedReservation);
+        // ── Initial payment (optional) ────────────────────────────
+        if (request.getInitialPayment() != null) {
+            Transaction initialTx = paymentService.buildTransaction(savedReservation, request.getInitialPayment());
+            transactionRepository.save(initialTx);
+            paymentService.publishPaymentReceivedInternal(savedReservation, request.getInitialPayment().getAmount());
+            PaymentSummary summary = paymentService.computePaymentSummary(savedReservation);
+            if (summary.getPaymentStatus() == PaymentStatus.PAID) {
+                paymentService.publishPaymentCompletedInternal(savedReservation);
+            }
+        }
+
+        return toEnrichedResponse(savedReservation);
+
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -272,28 +301,29 @@ public class ReservationServiceImpl implements ReservationService {
     @Override
     @Transactional(readOnly = true)
     public ReservationResponse getReservationById(UUID reservationId) {
-        return reservationMapper.toResponse(findById(reservationId));
+        return toEnrichedResponse(findById(reservationId));
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<ReservationResponse> getAllReservations() {
         return reservationRepository.findAll().stream()
-                .map(reservationMapper::toResponse).toList();
+                .map(this::toEnrichedResponse)
+                .toList();
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<ReservationResponse> getReservationsByUser(UUID userId) {
         return reservationRepository.findByUserUserId(userId).stream()
-                .map(reservationMapper::toResponse).toList();
+                .map(this::toEnrichedResponse).toList();
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<ReservationResponse> getReservationsByStatus(ReservationStatus status) {
         return reservationRepository.findByStatus(status).stream()
-                .map(reservationMapper::toResponse).toList();
+                .map(this::toEnrichedResponse).toList();
     }
 
     @Override
@@ -367,6 +397,61 @@ public class ReservationServiceImpl implements ReservationService {
                                     + "\" arrive le " + savedReservation.getCheckInDate())
                             .build()
             );
+            // AFTER your two existing notificationPublisher.publish() calls
+// inside "if (status == ReservationStatus.CONFIRMED)" ADD:
+
+            // ── Auto-generate PROFORMA invoice ────────────────────
+            double proformaTotal =
+                    (savedReservation.getTotalAmount()       != null ? savedReservation.getTotalAmount()       : 0.0)
+                            + (savedReservation.getTotalExtrasAmount() != null ? savedReservation.getTotalExtrasAmount() : 0.0);
+
+// ADD THIS — compute what was already paid before confirmation
+            PaymentSummary alreadyPaid = paymentService.computePaymentSummary(savedReservation);
+            double paidSoFar = alreadyPaid.getTotalPaid();
+
+// Determine correct payment status for the proforma
+            PaymentStatus proformaPaymentStatus;
+            if (paidSoFar <= 0) {
+                proformaPaymentStatus = PaymentStatus.UNPAID;
+            } else if (paidSoFar < proformaTotal) {
+                proformaPaymentStatus = PaymentStatus.PARTIALLY_PAID;
+            } else {
+                proformaPaymentStatus = PaymentStatus.PAID;
+            }
+
+            Invoice proforma = Invoice.builder()
+                    .invoiceNumber(generateProformaNumber())
+                    .invoiceType(InvoiceType.PROFORMA)
+                    .invoiceDate(LocalDate.now())
+                    .totalAmount(proformaTotal)
+                    .paidAmount(paidSoFar)               // ← reflects what was already paid
+                    .status(InvoiceStatus.DRAFT)
+                    .paymentStatus(proformaPaymentStatus) // ← correct status
+                    .reservation(savedReservation)
+                    .user(savedReservation.getUser())
+                    .build();
+
+            int line = 1;
+            if (savedReservation.getTotalAmount() != null && savedReservation.getTotalAmount() > 0) {
+                String mainLabel = savedReservation.getReservationType() == ReservationType.TOURS ? "Tours" : "Hébergement";
+                proforma.addItem(InvoiceItem.builder()
+                        .description(mainLabel)
+                        .itemType(mainLabel.toUpperCase())
+                        .quantity(1)
+                        .unitPrice(savedReservation.getTotalAmount())
+                        .lineNumber(line++)
+                        .build());
+            }
+            if (savedReservation.getTotalExtrasAmount() != null && savedReservation.getTotalExtrasAmount() > 0) {
+                proforma.addItem(InvoiceItem.builder()
+                        .description("Extras")
+                        .itemType("EXTRA")
+                        .quantity(1)
+                        .unitPrice(savedReservation.getTotalExtrasAmount())
+                        .lineNumber(line)
+                        .build());
+            }
+            invoiceRepository.save(proforma);
         }
 
         if (status == ReservationStatus.REJECTED) {
@@ -385,7 +470,7 @@ public class ReservationServiceImpl implements ReservationService {
             );
         }
 
-        return reservationMapper.toResponse(savedReservation);
+        return toEnrichedResponse(savedReservation);
     }
 
     @Override
@@ -534,7 +619,7 @@ public class ReservationServiceImpl implements ReservationService {
                         .build()
         );
 
-        return reservationMapper.toResponse(savedReservation);
+        return toEnrichedResponse(savedReservation);
     }
 
     @Override
@@ -548,12 +633,36 @@ public class ReservationServiceImpl implements ReservationService {
                 .orElseThrow(() -> new RuntimeException("User not found: " + userId));
         return reservationRepository.findByUserOrderByCreatedAtDesc(user)
                 .stream()
-                .map(reservationMapper::toResponse)
+                .map(this::toEnrichedResponse)
                 .collect(Collectors.toList());
     }
 
     private Reservation findById(UUID reservationId) {
         return reservationRepository.findById(reservationId)
                 .orElseThrow(() -> new RuntimeException("Reservation not found: " + reservationId));
+    }
+    private String generateProformaNumber() {
+        // PRO-00001 format — separate sequence from INV-
+        long count = invoiceRepository.count() + 1;
+        return String.format("PRO-%05d", count);
+    }
+    private ReservationResponse toEnrichedResponse(Reservation reservation) {
+        ReservationResponse response = reservationMapper.toResponse(reservation);
+        response.setPaymentSummary(paymentService.computePaymentSummary(reservation));
+        List<TransactionResponse> txHistory = transactionRepository
+                .findByReservationReservationId(reservation.getReservationId())
+                .stream()
+                .sorted(Comparator.comparing(Transaction::getTransactionDate))
+                .map(transactionMapper::toResponse)
+                .toList();
+        response.setTransactions(txHistory);
+        return response;
+    }
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReservationResponse> searchReservationsByName(String name) {
+        return reservationRepository.searchByUserName(name).stream()
+                .map(this::toEnrichedResponse)
+                .toList();
     }
 }

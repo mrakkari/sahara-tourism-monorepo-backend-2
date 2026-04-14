@@ -7,6 +7,7 @@ public enum NotificationType {
     RESERVATION_REJECTED,
     RESERVATION_UPDATED,
     PAYMENT_RECEIVED,
+    PAYMENT_COMPLETED,   // ← NEW — fired when totalAmount + totalExtrasAmount both reach 0
     INVOICE_SENT,
     PROMO_CODE,
     GENERAL

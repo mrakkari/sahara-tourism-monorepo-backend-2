@@ -1,6 +1,7 @@
 package com.camping.duneinsolite.dto.request;
 
 import com.camping.duneinsolite.model.enums.ReservationType;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import lombok.Data;
 import java.time.LocalDate;
@@ -50,4 +51,9 @@ public class ReservationRequest {
 
     private List<ParticipantRequest> participants;
     private List<ReservationExtraRequest> extras;
+    // ── NEW — Optional initial payment at reservation creation time ──
+    // If provided → a Transaction is created immediately after save
+    // If null     → reservation is created with paymentStatus = UNPAID
+    @Valid
+    private PaymentRequest initialPayment;
 }

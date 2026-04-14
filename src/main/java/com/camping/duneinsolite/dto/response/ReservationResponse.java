@@ -25,6 +25,7 @@ public class ReservationResponse {
     private ReservationStatus status;
     private String rejectionReason;
     private Double totalAmount;
+    private Double totalExtrasAmount;
     private String currency;
     private String promoCode;
     private String demandeSpecial;
@@ -32,7 +33,13 @@ public class ReservationResponse {
     private List<ReservationTourResponse> tours;
     private List<ParticipantResponse> participants;
     private List<ReservationExtraResponse> extras;
-    private Double totalExtrasAmount;
     private LocalDateTime createdAt;
     private LocalDateTime deletedAt;
+
+    // ── Payment — computed from transactions, never stored in DB ──
+    // Injected manually in service after MapStruct mapping
+    private PaymentSummary paymentSummary;
+
+    // Full transaction history — each payment event with its date
+    private List<TransactionResponse> transactions;
 }

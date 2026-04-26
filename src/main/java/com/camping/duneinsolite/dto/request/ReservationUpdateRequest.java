@@ -1,5 +1,6 @@
 package com.camping.duneinsolite.dto.request;
 
+import com.camping.duneinsolite.model.enums.Currency;
 import lombok.Data;
 
 import java.time.LocalDate;
@@ -15,7 +16,7 @@ public class ReservationUpdateRequest {
     private String groupLeaderName;
     private String demandeSpecial;
     private String promoCode;
-    private String currency;
+   // private Currency currency;
     private Integer numberOfAdults;
     private Integer numberOfChildren;
 

@@ -1,5 +1,6 @@
 package com.camping.duneinsolite.model;
 
+import com.camping.duneinsolite.model.enums.Currency;
 import com.camping.duneinsolite.model.enums.ReservationStatus;
 import com.camping.duneinsolite.model.enums.ReservationType;
 import jakarta.persistence.*;
@@ -26,9 +27,6 @@ public class Reservation {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
-
-    @Column(name = "source")
-    private String source;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "reservation_type", nullable = false)
@@ -72,9 +70,10 @@ public class Reservation {
     @Column(name = "total_amount")
     private Double totalAmount;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "currency", length = 3)
     @Builder.Default
-    private String currency = "USD";
+    private Currency currency = Currency.TND;
 
     @Column(name = "promo_code")
     private String promoCode;
@@ -115,6 +114,21 @@ public class Reservation {
     @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = false)
     @Builder.Default
     private List<Transaction> transactions = new ArrayList<>();
+
+    // ── Source (OneToOne) ─────────────────────────────────────────
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "source_ref_id")
+    private Source sourceRef;
+
+    // ── Guides ────────────────────────────────────────────────────
+    @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<Guide> guides = new ArrayList<>();
+
+    // ── Chauffeurs ────────────────────────────────────────────────
+    @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<Chauffeur> chauffeurs = new ArrayList<>();
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -195,5 +209,24 @@ public class Reservation {
         return tours.stream()
                 .mapToDouble(ReservationTour::getTotalPrice)
                 .sum();
+    }
+    public void addGuide(Guide guide) {
+        guides.add(guide);
+        guide.setReservation(this);
+    }
+
+    public void removeGuide(Guide guide) {
+        guides.remove(guide);
+        guide.setReservation(null);
+    }
+
+    public void addChauffeur(Chauffeur chauffeur) {
+        chauffeurs.add(chauffeur);
+        chauffeur.setReservation(this);
+    }
+
+    public void removeChauffeur(Chauffeur chauffeur) {
+        chauffeurs.remove(chauffeur);
+        chauffeur.setReservation(null);
     }
 }

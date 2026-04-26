@@ -1,5 +1,6 @@
 package com.camping.duneinsolite.dto.request;
 
+import com.camping.duneinsolite.model.enums.Currency;
 import com.camping.duneinsolite.model.enums.ReservationType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
@@ -14,7 +15,8 @@ public class ReservationRequest {
     @NotNull(message = "User ID is required")
     private UUID userId;
 
-    private String source;
+    @NotNull(message = "Source is required")
+    private UUID sourceId;
 
     @NotNull(message = "Reservation type is required")
     private ReservationType reservationType;
@@ -39,7 +41,7 @@ public class ReservationRequest {
     @Min(value = 0, message = "Number of children cannot be negative")
     private Integer numberOfChildren;
 
-    private String currency;
+   // private Currency currency;
     private String promoCode;
     private String demandeSpecial;
 

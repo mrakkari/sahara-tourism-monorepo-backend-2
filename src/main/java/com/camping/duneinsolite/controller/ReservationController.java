@@ -1,18 +1,20 @@
 package com.camping.duneinsolite.controller;
 
 
-import com.camping.duneinsolite.dto.request.ReservationRequest;
-import com.camping.duneinsolite.dto.request.ReservationUpdateRequest;
+import com.camping.duneinsolite.dto.request.*;
 import com.camping.duneinsolite.dto.response.ReservationResponse;
 import com.camping.duneinsolite.model.enums.ReservationStatus;
 import com.camping.duneinsolite.service.ReservationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -34,6 +36,13 @@ public class ReservationController {
     public ResponseEntity<ReservationResponse> getReservationById(@PathVariable UUID reservationId) {
         return ResponseEntity.ok(reservationService.getReservationById(reservationId));
     }
+    @PostMapping("/{reservationId}/staff")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ReservationResponse> addStaff(
+            @PathVariable UUID reservationId,
+            @Valid @RequestBody ReservationStaffRequest request) {
+        return ResponseEntity.ok(reservationService.addStaffToReservation(reservationId, request));
+    }
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'CAMPING', 'PARTENAIRE')")
@@ -51,6 +60,16 @@ public class ReservationController {
     @PreAuthorize("hasAnyRole('ADMIN', 'CAMPING')")
     public ResponseEntity<List<ReservationResponse>> getReservationsByStatus(@PathVariable ReservationStatus status) {
         return ResponseEntity.ok(reservationService.getReservationsByStatus(status));
+    }
+    @GetMapping("/active")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAMPING', 'PARTENAIRE')")
+    public ResponseEntity<List<ReservationResponse>> getActiveReservations(
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        if (date != null) {
+            return ResponseEntity.ok(reservationService.getActiveReservationsByDate(date));
+        }
+        return ResponseEntity.ok(reservationService.getActiveReservations());
     }
 
     @PatchMapping("/{reservationId}/status")
@@ -90,6 +109,78 @@ public class ReservationController {
     public ResponseEntity<List<ReservationResponse>> searchByName(
             @RequestParam String name) {
         return ResponseEntity.ok(reservationService.searchReservationsByName(name));
+    }
+    @GetMapping("/by-date")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAMPING')")
+    public ResponseEntity<List<ReservationResponse>> getByDate(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return ResponseEntity.ok(reservationService.getReservationsByDate(date));
+    }
+
+    // ── Staff management — ADMIN only ─────────────────────────────────────────────
+
+    @PatchMapping("/{reservationId}/staff/guides/{guideId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ReservationResponse> updateGuide(
+            @PathVariable UUID reservationId,
+            @PathVariable UUID guideId,
+            @RequestBody GuideUpdateRequest request) {
+        return ResponseEntity.ok(
+                reservationService.updateGuide(reservationId, guideId, request));
+    }
+
+    @DeleteMapping("/{reservationId}/staff/guides/{guideId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<String> deleteGuide(
+            @PathVariable UUID reservationId,
+            @PathVariable UUID guideId) {
+        return ResponseEntity.ok(
+                reservationService.deleteGuide(reservationId, guideId));
+    }
+
+    @PatchMapping("/{reservationId}/staff/chauffeurs/{chauffeurId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ReservationResponse> updateChauffeur(
+            @PathVariable UUID reservationId,
+            @PathVariable UUID chauffeurId,
+            @RequestBody ChauffeurUpdateRequest request) {
+        return ResponseEntity.ok(
+                reservationService.updateChauffeur(reservationId, chauffeurId, request));
+    }
+
+    @DeleteMapping("/{reservationId}/staff/chauffeurs/{chauffeurId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<String> deleteChauffeur(
+            @PathVariable UUID reservationId,
+            @PathVariable UUID chauffeurId) {
+        return ResponseEntity.ok(
+                reservationService.deleteChauffeur(reservationId, chauffeurId));
+    }
+    @GetMapping("/camping/active")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAMPING')")
+    public ResponseEntity<List<ReservationResponse>> getCampingActiveReservations() {
+        return ResponseEntity.ok(reservationService.getCampingActiveReservations());
+    }
+
+    @GetMapping("/camping/by-date")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAMPING')")
+    public ResponseEntity<List<ReservationResponse>> getCampingActiveByDate(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return ResponseEntity.ok(reservationService.getCampingActiveReservationsByDate(date));
+    }
+
+    @GetMapping("/camping/search")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAMPING')")
+    public ResponseEntity<List<ReservationResponse>> searchCampingByName(
+            @RequestParam String name) {
+        return ResponseEntity.ok(reservationService.searchCampingReservationsByName(name));
+    }
+
+    @GetMapping("/camping/status")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAMPING')")
+    public ResponseEntity<List<ReservationResponse>> getCampingByStatus(
+            @RequestParam ReservationStatus status) {
+        return ResponseEntity.ok(reservationService.getCampingReservationsByStatus(status));
     }
 }
 

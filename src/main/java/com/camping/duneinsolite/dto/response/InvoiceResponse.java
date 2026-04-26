@@ -1,5 +1,6 @@
 package com.camping.duneinsolite.dto.response;
 
+import com.camping.duneinsolite.model.enums.Currency;
 import com.camping.duneinsolite.model.enums.InvoiceStatus;
 import com.camping.duneinsolite.model.enums.InvoiceType;
 import com.camping.duneinsolite.model.enums.PaymentStatus;
@@ -20,6 +21,7 @@ public class InvoiceResponse {
     private Double remainingAmount;
     private InvoiceStatus status;
     private PaymentStatus paymentStatus;
+    private Currency currency;
     private UUID reservationId;
     private UUID userId;
     private String userName;

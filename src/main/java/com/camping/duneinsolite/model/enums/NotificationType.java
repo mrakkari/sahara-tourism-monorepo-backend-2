@@ -10,5 +10,8 @@ public enum NotificationType {
     PAYMENT_COMPLETED,   // ← NEW — fired when totalAmount + totalExtrasAmount both reach 0
     INVOICE_SENT,
     PROMO_CODE,
+    STAFF_ASSIGNED,
+    STAFF_UPDATED,
     GENERAL
+
 }

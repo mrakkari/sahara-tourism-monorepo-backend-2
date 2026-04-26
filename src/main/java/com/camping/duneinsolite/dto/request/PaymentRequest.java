@@ -1,5 +1,6 @@
 package com.camping.duneinsolite.dto.request;
 
+import com.camping.duneinsolite.model.enums.Currency;
 import com.camping.duneinsolite.model.enums.PaymentMethod;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -15,8 +16,6 @@ public class PaymentRequest {
 
     @NotNull(message = "Payment method is required")
     private PaymentMethod paymentMethod;
-
-    // Optional — defaults to reservation currency if null
-    @Size(min = 3, max = 3, message = "Currency must be 3 characters")
-    private String currency;
+    @NotNull(message = "Currency is required")
+    private Currency currency;
 }

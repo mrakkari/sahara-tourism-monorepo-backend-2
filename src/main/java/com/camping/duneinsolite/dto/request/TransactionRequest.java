@@ -1,5 +1,6 @@
 package com.camping.duneinsolite.dto.request;
 
+import com.camping.duneinsolite.model.enums.Currency;
 import com.camping.duneinsolite.model.enums.PaymentMethod;
 import jakarta.validation.constraints.*;
 import lombok.Data;
@@ -18,9 +19,8 @@ public class TransactionRequest {
     @Positive(message = "Amount must be positive")
     private Double amount;
 
-    @NotBlank(message = "Currency is required")
-    @Size(min = 3, max = 3, message = "Currency must be 3 characters")
-    private String currency;
+    @NotNull(message = "Currency is required")
+    private Currency currency;
 
     @NotNull(message = "Payment method is required")
     private PaymentMethod paymentMethod;

@@ -1,6 +1,7 @@
 package com.camping.duneinsolite.model;
 
 
+import com.camping.duneinsolite.model.enums.Currency;
 import com.camping.duneinsolite.model.enums.PaymentMethod;
 import com.camping.duneinsolite.model.enums.TransactionStatus;
 import jakarta.persistence.*;
@@ -31,9 +32,10 @@ public class Transaction {
     @Column(name = "amount", nullable = false)
     private Double amount;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "currency", length = 3, nullable = false)
     @Builder.Default
-    private String currency = "USD";
+    private Currency currency = Currency.TND;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "payment_method", nullable = false)

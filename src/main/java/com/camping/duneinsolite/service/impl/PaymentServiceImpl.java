@@ -1,5 +1,6 @@
 package com.camping.duneinsolite.service.impl;
 
+import com.camping.duneinsolite.config.CurrencyConfig;
 import com.camping.duneinsolite.config.RabbitMQConfig;
 import com.camping.duneinsolite.dto.message.NotificationMessage;
 import com.camping.duneinsolite.dto.request.PaymentRequest;
@@ -9,10 +10,7 @@ import com.camping.duneinsolite.dto.response.TransactionResponse;
 import com.camping.duneinsolite.mapper.TransactionMapper;
 import com.camping.duneinsolite.model.Reservation;
 import com.camping.duneinsolite.model.Transaction;
-import com.camping.duneinsolite.model.enums.NotificationType;
-import com.camping.duneinsolite.model.enums.PaymentStatus;
-import com.camping.duneinsolite.model.enums.TransactionStatus;
-import com.camping.duneinsolite.model.enums.UserRole;
+import com.camping.duneinsolite.model.enums.*;
 import com.camping.duneinsolite.repository.ReservationRepository;
 import com.camping.duneinsolite.repository.TransactionRepository;
 import com.camping.duneinsolite.service.NotificationPublisher;
@@ -34,24 +32,54 @@ public class PaymentServiceImpl implements PaymentService {
     private final TransactionMapper transactionMapper;
     private final NotificationPublisher notificationPublisher;
 
-    // ── Standalone payment ────────────────────────────────────────
     @Override
     public PaymentResponse recordPayment(UUID reservationId, PaymentRequest request) {
 
         Reservation reservation = reservationRepository.findById(reservationId)
                 .orElseThrow(() -> new RuntimeException("Reservation not found: " + reservationId));
 
-        PaymentSummary current = computePaymentSummary(reservation);
-        if (current.getPaymentStatus() == PaymentStatus.PAID) {
-            throw new RuntimeException(
-                    "This reservation is already fully paid. No further payments are required."
-            );
+        Currency requestedCurrency = request.getCurrency();
+
+        // ── Step 1: Check if this is the first payment ────────────
+        boolean isFirstPayment = transactionRepository
+                .sumCompletedAmountByReservationId(reservationId) == 0.0;
+
+        if (isFirstPayment) {
+            // ── First payment: apply conversion if currency differs ──
+            if (requestedCurrency != reservation.getCurrency()) {
+                applyCurrencyConversion(reservation, requestedCurrency);
+                reservationRepository.save(reservation);
+            }
+        } else {
+            // ── Subsequent payment: currency must match reservation ──
+            if (requestedCurrency != reservation.getCurrency()) {
+                throw new RuntimeException(
+                        "Currency mismatch. This reservation must be paid in "
+                                + reservation.getCurrency().name()
+                                + ". You provided: " + requestedCurrency.name());
+            }
         }
 
+        // ── Step 2: Validate amount <= remainingTotal ─────────────
+        PaymentSummary current = computePaymentSummary(reservation);
+
+        if (current.getPaymentStatus() == PaymentStatus.PAID) {
+            throw new RuntimeException(
+                    "This reservation is already fully paid. No further payments are required.");
+        }
+
+        if (request.getAmount() > current.getRemainingTotal()) {
+            throw new RuntimeException(
+                    "Payment amount (" + request.getAmount() + " " + requestedCurrency.name()
+                            + ") exceeds the remaining balance ("
+                            + current.getRemainingTotal() + " " + reservation.getCurrency().name() + ").");
+        }
+
+        // ── Step 3: Save transaction ──────────────────────────────
         Transaction transaction = buildTransaction(reservation, request);
         Transaction saved = transactionRepository.save(transaction);
 
-        // Compute AFTER saving so the new transaction is included in the sum
+        // ── Step 4: Recompute after save ──────────────────────────
         PaymentSummary summary = computePaymentSummary(reservation);
 
         publishPaymentReceivedInternal(reservation, request.getAmount());
@@ -76,6 +104,28 @@ public class PaymentServiceImpl implements PaymentService {
         return response;
     }
 
+    // ── Currency conversion ───────────────────────────────────────
+    private void applyCurrencyConversion(Reservation reservation, Currency targetCurrency) {
+        double rate = switch (targetCurrency) {
+            case EUR -> CurrencyConfig.TND_TO_EUR;
+            case USD -> CurrencyConfig.TND_TO_USD;
+            case TND -> 1.0;
+        };
+
+        if (reservation.getTotalAmount() != null) {
+            reservation.setTotalAmount(
+                    Math.round(reservation.getTotalAmount() * rate * 100.0) / 100.0
+            );
+        }
+        if (reservation.getTotalExtrasAmount() != null) {
+            reservation.setTotalExtrasAmount(
+                    Math.round(reservation.getTotalExtrasAmount() * rate * 100.0) / 100.0
+            );
+        }
+
+        reservation.setCurrency(targetCurrency);
+    }
+
     // ── Compute payment summary ───────────────────────────────────
     @Override
     @Transactional(readOnly = true)
@@ -92,7 +142,7 @@ public class PaymentServiceImpl implements PaymentService {
         double remainingExtras;
 
         if (totalPaid >= originalMain) {
-            remainingMain = 0.0;
+            remainingMain   = 0.0;
             double overflow = totalPaid - originalMain;
             remainingExtras = Math.max(0.0, originalExtras - overflow);
         } else {
@@ -123,11 +173,10 @@ public class PaymentServiceImpl implements PaymentService {
                 .build();
     }
 
-    // ── Build Transaction entity ──────────────────────────────────
-    // public — called from ReservationServiceImpl for inline initial payment
+    // ── Build transaction ─────────────────────────────────────────
     @Override
     public Transaction buildTransaction(Reservation reservation, PaymentRequest request) {
-        String currency = request.getCurrency() != null
+        Currency currency = request.getCurrency() != null
                 ? request.getCurrency()
                 : reservation.getCurrency();
 
@@ -142,12 +191,10 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     // ── Notifications ─────────────────────────────────────────────
-    // @Override — declared in interface so ReservationServiceImpl
-    // can call them directly for the inline initial payment case
-
     @Override
     public void publishPaymentReceivedInternal(Reservation reservation, Double amount) {
-        String amountFormatted = String.format("%.2f %s", amount, reservation.getCurrency());
+        String amountFormatted = String.format("%.2f %s",
+                amount, reservation.getCurrency().name());
 
         notificationPublisher.publish(
                 RabbitMQConfig.PAYMENT_RECEIVED,

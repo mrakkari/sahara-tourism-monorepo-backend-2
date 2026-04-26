@@ -1,5 +1,6 @@
 package com.camping.duneinsolite.dto.response;
 
+import com.camping.duneinsolite.model.enums.Currency;
 import com.camping.duneinsolite.model.enums.ReservationStatus;
 import com.camping.duneinsolite.model.enums.ReservationType;
 import lombok.Data;
@@ -13,7 +14,7 @@ public class ReservationResponse {
     private UUID reservationId;
     private UUID userId;
     private String userName;
-    private String source;
+   // private String source;
     private ReservationType reservationType;
     private LocalDate checkInDate;
     private LocalDate checkOutDate;
@@ -26,7 +27,7 @@ public class ReservationResponse {
     private String rejectionReason;
     private Double totalAmount;
     private Double totalExtrasAmount;
-    private String currency;
+    private Currency currency;
     private String promoCode;
     private String demandeSpecial;
     private List<ReservationTourTypeResponse> tourTypes;
@@ -42,4 +43,8 @@ public class ReservationResponse {
 
     // Full transaction history — each payment event with its date
     private List<TransactionResponse> transactions;
+
+    private SourceResponse source;
+    private List<GuideResponse> guides;
+    private List<ChauffeurResponse> chauffeurs;
 }

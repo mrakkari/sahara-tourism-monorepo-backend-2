@@ -26,6 +26,9 @@ public class RabbitMQConfig {
     public static final String PAYMENT_RECEIVED      = "payment.received";
     public static final String PAYMENT_COMPLETED     = "payment.completed";
 
+    public static final String STAFF_ASSIGNED = "staff.assigned";
+    public static final String STAFF_UPDATED  = "staff.updated";
+
     // ── 3. Dead Letter Queue setup ────────────────────────────────
     @Bean
     public Queue notificationDLQ() {

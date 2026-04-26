@@ -10,12 +10,18 @@ import org.mapstruct.Mapping;
 @Mapper(componentModel = "spring", uses = {
         ReservationTourTypeMapper.class,
         ReservationExtraMapper.class,
-        ReservationTourMapper.class
+        ReservationTourMapper.class,
+        SourceMapper.class,
+        GuideMapper.class,
+        ChauffeurMapper.class
 })
 public interface ReservationMapper {
 
-    @Mapping(source = "user.userId", target = "userId")
-    @Mapping(source = "user.name",   target = "userName")
+    @Mapping(source = "user.userId",   target = "userId")
+    @Mapping(source = "user.name",     target = "userName")
+    @Mapping(source = "sourceRef",     target = "source")
+    @Mapping(source = "guides",        target = "guides")
+    @Mapping(source = "chauffeurs",    target = "chauffeurs")
     ReservationResponse toResponse(Reservation reservation);
 
     ParticipantResponse toParticipantResponse(Participant participant);

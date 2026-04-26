@@ -1,5 +1,6 @@
 package com.camping.duneinsolite.model;
 
+import com.camping.duneinsolite.model.enums.Currency;
 import com.camping.duneinsolite.model.enums.InvoiceStatus;
 import com.camping.duneinsolite.model.enums.InvoiceType;
 import com.camping.duneinsolite.model.enums.PaymentStatus;
@@ -52,6 +53,11 @@ public class Invoice {
     @Column(name = "status", nullable = false)
     @Builder.Default
     private InvoiceStatus status = InvoiceStatus.DRAFT;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "currency", length = 3, nullable = false)
+    @Builder.Default
+    private Currency currency = Currency.TND;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "payment_status", nullable = false)

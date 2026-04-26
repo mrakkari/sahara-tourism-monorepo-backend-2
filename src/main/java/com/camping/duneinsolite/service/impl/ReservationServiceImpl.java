@@ -1,21 +1,18 @@
 package com.camping.duneinsolite.service.impl;
 
+import com.camping.duneinsolite.config.CurrencyConfig;
 import com.camping.duneinsolite.config.RabbitMQConfig;
 import com.camping.duneinsolite.dto.message.NotificationMessage;
-import com.camping.duneinsolite.dto.request.ReservationRequest;
-import com.camping.duneinsolite.dto.request.ReservationUpdateRequest;
-import com.camping.duneinsolite.dto.request.TourTypeSelectionRequest;
+import com.camping.duneinsolite.dto.request.*;
 import com.camping.duneinsolite.dto.response.ReservationResponse;
 import com.camping.duneinsolite.exception.ReservationStatusException;
 import com.camping.duneinsolite.mapper.ReservationMapper;
 import com.camping.duneinsolite.model.*;
-import com.camping.duneinsolite.model.enums.NotificationType;
-import com.camping.duneinsolite.model.enums.ReservationStatus;
-import com.camping.duneinsolite.model.enums.ReservationType;
-import com.camping.duneinsolite.model.enums.UserRole;
+import com.camping.duneinsolite.model.enums.*;
 import com.camping.duneinsolite.repository.*;
 import com.camping.duneinsolite.service.NotificationPublisher;
 import com.camping.duneinsolite.service.ReservationService;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
@@ -33,10 +30,7 @@ import java.util.stream.Collectors;
  import com.camping.duneinsolite.model.Invoice;
  import com.camping.duneinsolite.model.InvoiceItem;
  import com.camping.duneinsolite.model.Transaction;
- import com.camping.duneinsolite.model.enums.InvoiceStatus;
- import com.camping.duneinsolite.model.enums.InvoiceType;
- import com.camping.duneinsolite.model.enums.PaymentStatus;
- import com.camping.duneinsolite.dto.response.PaymentSummary;
+import com.camping.duneinsolite.dto.response.PaymentSummary;
  import com.camping.duneinsolite.dto.response.TransactionResponse;
  import com.camping.duneinsolite.repository.InvoiceRepository;
  import com.camping.duneinsolite.repository.TransactionRepository;
@@ -53,6 +47,7 @@ public class ReservationServiceImpl implements ReservationService {
     private final TourTypeRepository         tourTypeRepository;
     private final ExtraRepository            extraRepository;
     private final TourRepository             tourRepository;
+    private final SourceRepository           sourceRepository;
     private final ReservationMapper          reservationMapper;
     private final NotificationPublisher      notificationPublisher;
     private final PaymentService paymentService;
@@ -64,144 +59,226 @@ public class ReservationServiceImpl implements ReservationService {
     // ─────────────────────────────────────────────────────────────
     // CREATE
     // ─────────────────────────────────────────────────────────────
-    @Override
-    public ReservationResponse createReservation(ReservationRequest request) {
+        @Override
+        public ReservationResponse createReservation(ReservationRequest request) {
 
-        User user = userRepository.findById(request.getUserId())
-                .orElseThrow(() -> new RuntimeException("User not found: " + request.getUserId()));
+            User user = userRepository.findById(request.getUserId())
+                    .orElseThrow(() -> new RuntimeException("User not found: " + request.getUserId()));
 
-        boolean isPartner = user.getRole() == UserRole.PARTENAIRE;
+            Source source = sourceRepository.findById(request.getSourceId())
+                    .orElseThrow(() -> new RuntimeException("Source not found: " + request.getSourceId()));
 
-        int globalAdults   = request.getNumberOfAdults()   != null ? request.getNumberOfAdults()   : 0;
-        int globalChildren = request.getNumberOfChildren() != null ? request.getNumberOfChildren() : 0;
+            boolean isPartner = user.getRole() == UserRole.PARTENAIRE;
 
-        ReservationType type = request.getReservationType();
+            int globalAdults   = request.getNumberOfAdults()   != null ? request.getNumberOfAdults()   : 0;
+            int globalChildren = request.getNumberOfChildren() != null ? request.getNumberOfChildren() : 0;
 
-        // ── Type-level validation ─────────────────────────────────
-        switch (type) {
-            case HEBERGEMENT -> {
-                if (request.getCheckInDate() == null || request.getCheckOutDate() == null) {
-                    throw new RuntimeException("Check-in and check-out dates are required for HEBERGEMENT reservations");
-                }
-                if (request.getTourTypes() == null || request.getTourTypes().isEmpty()) {
-                    throw new RuntimeException("At least one tour type is required for HEBERGEMENT reservations");
-                }
+            ReservationType type = request.getReservationType();
+
+            validateReservationByType(request, type);
+
+            Reservation reservation = buildBaseReservation(request, user, source, type, globalAdults, globalChildren);
+
+            applyReservationItems(request, reservation, type, globalAdults, globalChildren, isPartner);
+
+            // ── NEW: apply currency conversion if non-TND and initial payment provided ──
+
+
+            if (request.getInitialPayment() != null
+                    && request.getInitialPayment().getCurrency() != null
+                    && request.getInitialPayment().getCurrency() != Currency.TND) {
+                applyReservationCurrencyConversion(reservation, request.getInitialPayment().getCurrency());
             }
-            case TOURS -> {
-                if (request.getTours() == null || request.getTours().isEmpty()) {
-                    throw new RuntimeException("A tour selection is required for TOURS reservations");
-                }
-                if (request.getTours().size() > 1) {
-                    throw new RuntimeException("Only one tour can be selected per reservation");
-                }
-                if (request.getServiceDate() == null) {  // ← serviceDate = departure date for TOURS
-                    throw new RuntimeException("Departure date (serviceDate) is required for TOURS reservations");
-                }
-            }
-            case EXTRAS -> {
-                if (request.getExtras() == null || request.getExtras().isEmpty()) {
-                    throw new RuntimeException("At least one extra is required for EXTRAS reservations");
-                }
-                if (request.getServiceDate() == null) {
-                    throw new RuntimeException("Service date is required for EXTRAS reservations");
-                }
+            Reservation savedReservation = reservationRepository.save(reservation);
+
+            publishCreationNotification(savedReservation);
+
+            handleInitialPayment(request, savedReservation);
+
+            return toEnrichedResponse(savedReservation);
+        }
+
+    // ── Validation ────────────────────────────────────────────────────────────────
+
+        private void validateReservationByType(ReservationRequest request, ReservationType type) {
+            switch (type) {
+                case HEBERGEMENT -> validateHebergement(request);
+                case TOURS       -> validateTours(request);
+                case EXTRAS      -> validateExtras(request);
             }
         }
 
-        // ── Build base reservation ────────────────────────────────
-        Reservation reservation = Reservation.builder()
-                .user(user)
-                .source(request.getSource())
-                .reservationType(type)
-                .checkInDate(request.getCheckInDate())
-                .checkOutDate(request.getCheckOutDate())
-                .serviceDate(request.getServiceDate())
-                .groupName(request.getGroupName())
-                .groupLeaderName(request.getGroupLeaderName())
-                .demandeSpecial(request.getDemandeSpecial())
-                .numberOfAdults(globalAdults)
-                .numberOfChildren(globalChildren)
-                .currency(request.getCurrency() != null ? request.getCurrency() : "USD")
-                .promoCode(request.getPromoCode())
-                .status(ReservationStatus.PENDING)
-                .build();
+        private void validateHebergement(ReservationRequest request) {
+            if (request.getCheckInDate() == null || request.getCheckOutDate() == null) {
+                throw new RuntimeException("Check-in and check-out dates are required for HEBERGEMENT reservations");
+            }
+            if (request.getTourTypes() == null || request.getTourTypes().isEmpty()) {
+                throw new RuntimeException("At least one tour type is required for HEBERGEMENT reservations");
+            }
+        }
 
-        // ── HEBERGEMENT — snapshot TourTypes ──────────────────────
-        if (type == ReservationType.HEBERGEMENT) {
+        private void validateTours(ReservationRequest request) {
+            if (request.getTours() == null || request.getTours().isEmpty()) {
+                throw new RuntimeException("A tour selection is required for TOURS reservations");
+            }
+            if (request.getTours().size() > 1) {
+                throw new RuntimeException("Only one tour can be selected per reservation");
+            }
+            if (request.getServiceDate() == null) {
+                throw new RuntimeException("Departure date (serviceDate) is required for TOURS reservations");
+            }
+        }
+
+        private void validateExtras(ReservationRequest request) {
+            if (request.getExtras() == null || request.getExtras().isEmpty()) {
+                throw new RuntimeException("At least one extra is required for EXTRAS reservations");
+            }
+            if (request.getServiceDate() == null) {
+                throw new RuntimeException("Service date is required for EXTRAS reservations");
+            }
+        }
+
+    // ── Base reservation builder ──────────────────────────────────────────────────
+
+        private Reservation buildBaseReservation(ReservationRequest request, User user,
+                                                 Source source,
+                                                 ReservationType type,
+                                                 int globalAdults, int globalChildren) {
+            return Reservation.builder()
+                    .user(user)
+                    .sourceRef(source)
+                    .reservationType(type)
+                    .checkInDate(request.getCheckInDate())
+                    .checkOutDate(request.getCheckOutDate())
+                    .serviceDate(request.getServiceDate())
+                    .groupName(request.getGroupName())
+                    .groupLeaderName(request.getGroupLeaderName())
+                    .demandeSpecial(request.getDemandeSpecial())
+                    .numberOfAdults(globalAdults)
+                    .numberOfChildren(globalChildren)
+                    // ← use Currency enum, default TND if null
+                    .currency(Currency.TND)
+                    .promoCode(request.getPromoCode())
+                    .status(ReservationStatus.PENDING)
+                    .build();
+        }
+
+    // ── Items dispatcher ──────────────────────────────────────────────────────────
+
+        private void applyReservationItems(ReservationRequest request, Reservation reservation,
+                                           ReservationType type,
+                                           int globalAdults, int globalChildren,
+                                           boolean isPartner) {
+            switch (type) {
+                case HEBERGEMENT -> applyHebergementItems(request, reservation, globalAdults, globalChildren, isPartner);
+                case TOURS       -> applyToursItems(request, reservation, globalAdults, globalChildren, isPartner);
+                case EXTRAS      -> reservation.setTotalAmount(null);
+            }
+
+            applyParticipants(request, reservation);
+            applyExtras(request, reservation);
+
+            reservation.setTotalExtrasAmount(reservation.calculateTotalExtrasAmount());
+        }
+
+    // ── HEBERGEMENT ───────────────────────────────────────────────────────────────
+
+        private void applyHebergementItems(ReservationRequest request, Reservation reservation,
+                                           int globalAdults, int globalChildren,
+                                           boolean isPartner) {
             long nights = ChronoUnit.DAYS.between(request.getCheckInDate(), request.getCheckOutDate());
             if (nights <= 0) nights = 1;
 
             boolean singleTourType = request.getTourTypes().size() == 1;
 
-            // Validate per-tourtype people counts when multiple selected
             if (!singleTourType) {
-                for (TourTypeSelectionRequest selection : request.getTourTypes()) {
-                    int selAdults   = selection.getNumberOfAdults()   != null ? selection.getNumberOfAdults()   : 0;
-                    int selChildren = selection.getNumberOfChildren() != null ? selection.getNumberOfChildren() : 0;
-
-                    if (selAdults > globalAdults) {
-                        throw new RuntimeException(
-                                "Tour type adults (" + selAdults + ") cannot exceed group adults (" + globalAdults + ")"
-                        );
-                    }
-                    if (selChildren > globalChildren) {
-                        throw new RuntimeException(
-                                "Tour type children (" + selChildren + ") cannot exceed group children (" + globalChildren + ")"
-                        );
-                    }
-                }
-
-                int totalSelAdults = request.getTourTypes().stream()
-                        .mapToInt(t -> t.getNumberOfAdults() != null ? t.getNumberOfAdults() : 0).sum();
-                int totalSelChildren = request.getTourTypes().stream()
-                        .mapToInt(t -> t.getNumberOfChildren() != null ? t.getNumberOfChildren() : 0).sum();
-
-                if (totalSelAdults < globalAdults) {
-                    throw new RuntimeException(
-                            "Total adults across all tour types (" + totalSelAdults + ") " +
-                                    "cannot be less than group adults (" + globalAdults + "). " +
-                                    "Every person must be assigned to at least one tour type."
-                    );
-                }
-                if (totalSelChildren < globalChildren) {
-                    throw new RuntimeException(
-                            "Total children across all tour types (" + totalSelChildren + ") " +
-                                    "cannot be less than group children (" + globalChildren + "). " +
-                                    "Every child must be assigned to at least one tour type."
-                    );
-                }
+                validateTourTypePeopleCounts(request, globalAdults, globalChildren);
             }
 
             for (TourTypeSelectionRequest selection : request.getTourTypes()) {
-                TourType tourType = tourTypeRepository.findById(selection.getTourTypeId())
-                        .orElseThrow(() -> new RuntimeException("TourType not found: " + selection.getTourTypeId()));
-
-                int adults   = singleTourType ? globalAdults   : (selection.getNumberOfAdults()   != null ? selection.getNumberOfAdults()   : 0);
-                int children = singleTourType ? globalChildren : (selection.getNumberOfChildren() != null ? selection.getNumberOfChildren() : 0);
-
-                double adultPrice = isPartner ? tourType.getPartnerAdultPrice() : tourType.getPassengerAdultPrice();
-                double childPrice = isPartner ? tourType.getPartnerChildPrice() : tourType.getPassengerChildPrice();
-
-                ReservationTourType snapshot = ReservationTourType.builder()
-                        .name(tourType.getName())
-                        .description(tourType.getDescription())
-                        .duration(tourType.getDuration())
-                        .adultPrice(adultPrice)
-                        .childPrice(childPrice)
-                        .numberOfAdults(adults)
-                        .numberOfChildren(children)
-                        .numberOfNights((int) nights)
-                        .build();
-
+                ReservationTourType snapshot = buildTourTypeSnapshot(
+                        selection, singleTourType, globalAdults, globalChildren, nights, isPartner);
                 reservation.addTourType(snapshot);
             }
 
             reservation.setTotalAmount(reservation.calculateTotalTourTypesAmount());
         }
 
-        // ── TOURS — snapshot Tour ─────────────────────────────────
-        if (type == ReservationType.TOURS) {
-            var selection = request.getTours().get(0);
+        private void validateTourTypePeopleCounts(ReservationRequest request,
+                                                  int globalAdults, int globalChildren) {
+            for (TourTypeSelectionRequest selection : request.getTourTypes()) {
+                int selAdults   = selection.getNumberOfAdults()   != null ? selection.getNumberOfAdults()   : 0;
+                int selChildren = selection.getNumberOfChildren() != null ? selection.getNumberOfChildren() : 0;
+
+                if (selAdults > globalAdults) {
+                    throw new RuntimeException(
+                            "Tour type adults (" + selAdults + ") cannot exceed group adults (" + globalAdults + ")");
+                }
+                if (selChildren > globalChildren) {
+                    throw new RuntimeException(
+                            "Tour type children (" + selChildren + ") cannot exceed group children (" + globalChildren + ")");
+                }
+            }
+
+            int totalSelAdults = request.getTourTypes().stream()
+                    .mapToInt(t -> t.getNumberOfAdults() != null ? t.getNumberOfAdults() : 0).sum();
+            int totalSelChildren = request.getTourTypes().stream()
+                    .mapToInt(t -> t.getNumberOfChildren() != null ? t.getNumberOfChildren() : 0).sum();
+
+            if (totalSelAdults < globalAdults) {
+                throw new RuntimeException(
+                        "Total adults across all tour types (" + totalSelAdults + ") " +
+                                "cannot be less than group adults (" + globalAdults + "). " +
+                                "Every person must be assigned to at least one tour type.");
+            }
+            if (totalSelChildren < globalChildren) {
+                throw new RuntimeException(
+                        "Total children across all tour types (" + totalSelChildren + ") " +
+                                "cannot be less than group children (" + globalChildren + "). " +
+                                "Every child must be assigned to at least one tour type.");
+            }
+        }
+
+        private ReservationTourType buildTourTypeSnapshot(TourTypeSelectionRequest selection,
+                                                          boolean singleTourType,
+                                                          int globalAdults, int globalChildren,
+                                                          long nights, boolean isPartner) {
+            TourType tourType = tourTypeRepository.findById(selection.getTourTypeId())
+                    .orElseThrow(() -> new RuntimeException("TourType not found: " + selection.getTourTypeId()));
+
+            int adults   = singleTourType ? globalAdults   : (selection.getNumberOfAdults()   != null ? selection.getNumberOfAdults()   : 0);
+            int children = singleTourType ? globalChildren : (selection.getNumberOfChildren() != null ? selection.getNumberOfChildren() : 0);
+
+            double adultPrice = isPartner ? tourType.getPartnerAdultPrice() : tourType.getPassengerAdultPrice();
+            double childPrice = isPartner ? tourType.getPartnerChildPrice() : tourType.getPassengerChildPrice();
+
+            return ReservationTourType.builder()
+                    .name(tourType.getName())
+                    .description(tourType.getDescription())
+                    .duration(tourType.getDuration())
+                    .adultPrice(adultPrice)
+                    .childPrice(childPrice)
+                    .numberOfAdults(adults)
+                    .numberOfChildren(children)
+                    .numberOfNights((int) nights)
+                    .build();
+        }
+
+    // ── TOURS ─────────────────────────────────────────────────────────────────────
+
+        private void applyToursItems(ReservationRequest request, Reservation reservation,
+                                     int globalAdults, int globalChildren,
+                                     boolean isPartner) {
+            ReservationTour reservationTour = buildTourSnapshot(
+                    request, globalAdults, globalChildren, isPartner);
+            reservation.addTour(reservationTour);
+            reservation.setTotalAmount(reservation.calculateTotalToursAmount());
+        }
+
+        private ReservationTour buildTourSnapshot(ReservationRequest request,
+                                                  int globalAdults, int globalChildren,
+                                                  boolean isPartner) {
+            TourSelectionRequest selection = request.getTours().get(0);
 
             Tour tour = tourRepository.findById(selection.getTourId())
                     .orElseThrow(() -> new RuntimeException("Tour not found: " + selection.getTourId()));
@@ -210,7 +287,7 @@ public class ReservationServiceImpl implements ReservationService {
             double childPrice = isPartner ? tour.getPartnerChildPrice() : tour.getPassengerChildPrice();
             double totalPrice = (globalAdults * adultPrice) + (globalChildren * childPrice);
 
-            ReservationTour reservationTour = ReservationTour.builder()
+            return ReservationTour.builder()
                     .name(tour.getName())
                     .description(tour.getDescription())
                     .duration(tour.getDuration())
@@ -218,21 +295,16 @@ public class ReservationServiceImpl implements ReservationService {
                     .childPrice(childPrice)
                     .numberOfAdults(globalAdults)
                     .numberOfChildren(globalChildren)
-                    .departureDate(request.getServiceDate())  // ← serviceDate used as departureDate
+                    .departureDate(request.getServiceDate())
                     .totalPrice(totalPrice)
                     .build();
-
-            reservation.addTour(reservationTour);
-            reservation.setTotalAmount(reservation.calculateTotalToursAmount());
         }
 
-        // ── EXTRAS only — totalAmount is null ─────────────────────
-        if (type == ReservationType.EXTRAS) {
-            reservation.setTotalAmount(null);
-        }
+    // ── Participants ──────────────────────────────────────────────────────────────
 
-        // ── Participants (all types) ───────────────────────────────
-        if (request.getParticipants() != null) {
+        private void applyParticipants(ReservationRequest request, Reservation reservation) {
+            if (request.getParticipants() == null) return;
+
             request.getParticipants().forEach(p -> {
                 Participant participant = Participant.builder()
                         .fullName(p.getFullName())
@@ -243,8 +315,11 @@ public class ReservationServiceImpl implements ReservationService {
             });
         }
 
-        // ── Extras (all types) ────────────────────────────────────
-        if (request.getExtras() != null) {
+    // ── Extras ────────────────────────────────────────────────────────────────────
+
+        private void applyExtras(ReservationRequest request, Reservation reservation) {
+            if (request.getExtras() == null) return;
+
             request.getExtras().forEach(e -> {
                 Extra catalog = extraRepository.findById(e.getExtraId())
                         .orElseThrow(() -> new RuntimeException("Extra not found: " + e.getExtraId()));
@@ -262,37 +337,36 @@ public class ReservationServiceImpl implements ReservationService {
             });
         }
 
-        reservation.setTotalExtrasAmount(reservation.calculateTotalExtrasAmount());
+    // ── Notification ──────────────────────────────────────────────────────────────
 
-        // ── Save and notify ───────────────────────────────────────
-        Reservation savedReservation = reservationRepository.save(reservation);
+        private void publishCreationNotification(Reservation savedReservation) {
+            notificationPublisher.publish(
+                    RabbitMQConfig.RESERVATION_CREATED,
+                    NotificationMessage.builder()
+                            .targetRoles(List.of(UserRole.ADMIN))
+                            .type(NotificationType.RESERVATION_CREATED)
+                            .reservationId(savedReservation.getReservationId())
+                            .title("Nouvelle réservation")
+                            .message("Le groupe \"" + savedReservation.getGroupName()
+                                    + "\" a soumis une demande de réservation.")
+                            .build()
+            );
+        }
 
-        notificationPublisher.publish(
-                RabbitMQConfig.RESERVATION_CREATED,
-                NotificationMessage.builder()
-                        .targetRoles(List.of(UserRole.ADMIN))
-                        .type(NotificationType.RESERVATION_CREATED)
-                        .reservationId(savedReservation.getReservationId())
-                        .title("Nouvelle réservation")
-                        .message("Le groupe \"" + savedReservation.getGroupName()
-                                + "\" a soumis une demande de réservation.")
-                        .build()
-        );
+    // ── Initial payment ───────────────────────────────────────────────────────────
 
-        // ── Initial payment (optional) ────────────────────────────
-        if (request.getInitialPayment() != null) {
+        private void handleInitialPayment(ReservationRequest request, Reservation savedReservation) {
+            if (request.getInitialPayment() == null) return;
+
             Transaction initialTx = paymentService.buildTransaction(savedReservation, request.getInitialPayment());
             transactionRepository.save(initialTx);
             paymentService.publishPaymentReceivedInternal(savedReservation, request.getInitialPayment().getAmount());
+
             PaymentSummary summary = paymentService.computePaymentSummary(savedReservation);
             if (summary.getPaymentStatus() == PaymentStatus.PAID) {
                 paymentService.publishPaymentCompletedInternal(savedReservation);
             }
         }
-
-        return toEnrichedResponse(savedReservation);
-
-    }
 
     // ─────────────────────────────────────────────────────────────
     // ALL OTHER METHODS — UNTOUCHED FROM ORIGINAL
@@ -375,6 +449,31 @@ public class ReservationServiceImpl implements ReservationService {
         Reservation savedReservation = reservationRepository.save(reservation);
 
         if (status == ReservationStatus.CONFIRMED) {
+
+            // ── Build confirmation message — include staff if already assigned ──
+            boolean hasGuides     = !savedReservation.getGuides().isEmpty();
+            boolean hasChauffeurs = !savedReservation.getChauffeurs().isEmpty();
+
+            String confirmMessage;
+            if (hasGuides || hasChauffeurs) {
+                String guideNames = savedReservation.getGuides().stream()
+                        .map(g -> g.getFirstName() + " " + g.getLastName())
+                        .collect(Collectors.joining(", "));
+                String chauffeurNames = savedReservation.getChauffeurs().stream()
+                        .map(c -> c.getFirstName() + " " + c.getLastName())
+                        .collect(Collectors.joining(", "));
+
+                StringBuilder sb = new StringBuilder("Votre réservation pour le groupe \"")
+                        .append(savedReservation.getGroupName()).append("\" a été confirmée.");
+                if (hasGuides)     sb.append(" Guide(s): ").append(guideNames).append(".");
+                if (hasChauffeurs) sb.append(" Chauffeur(s): ").append(chauffeurNames).append(".");
+                confirmMessage = sb.toString();
+            } else {
+                confirmMessage = "Votre réservation pour le groupe \""
+                        + savedReservation.getGroupName() + "\" a été confirmée.";
+            }
+
+            // ── Notify client/partenaire ──────────────────────────────────
             notificationPublisher.publish(
                     RabbitMQConfig.RESERVATION_CONFIRMED,
                     NotificationMessage.builder()
@@ -382,10 +481,11 @@ public class ReservationServiceImpl implements ReservationService {
                             .type(NotificationType.RESERVATION_CONFIRMED)
                             .reservationId(savedReservation.getReservationId())
                             .title("Réservation confirmée")
-                            .message("Votre réservation pour le groupe \""
-                                    + savedReservation.getGroupName() + "\" a été confirmée.")
+                            .message(confirmMessage)
                             .build()
             );
+
+            // ── Notify CAMPING role — unchanged ──────────────────────────
             notificationPublisher.publish(
                     RabbitMQConfig.RESERVATION_CONFIRMED,
                     NotificationMessage.builder()
@@ -397,19 +497,15 @@ public class ReservationServiceImpl implements ReservationService {
                                     + "\" arrive le " + savedReservation.getCheckInDate())
                             .build()
             );
-            // AFTER your two existing notificationPublisher.publish() calls
-// inside "if (status == ReservationStatus.CONFIRMED)" ADD:
 
-            // ── Auto-generate PROFORMA invoice ────────────────────
+            // ── Auto-generate PROFORMA invoice — UNCHANGED ────────────────
             double proformaTotal =
                     (savedReservation.getTotalAmount()       != null ? savedReservation.getTotalAmount()       : 0.0)
                             + (savedReservation.getTotalExtrasAmount() != null ? savedReservation.getTotalExtrasAmount() : 0.0);
 
-// ADD THIS — compute what was already paid before confirmation
             PaymentSummary alreadyPaid = paymentService.computePaymentSummary(savedReservation);
             double paidSoFar = alreadyPaid.getTotalPaid();
 
-// Determine correct payment status for the proforma
             PaymentStatus proformaPaymentStatus;
             if (paidSoFar <= 0) {
                 proformaPaymentStatus = PaymentStatus.UNPAID;
@@ -424,9 +520,10 @@ public class ReservationServiceImpl implements ReservationService {
                     .invoiceType(InvoiceType.PROFORMA)
                     .invoiceDate(LocalDate.now())
                     .totalAmount(proformaTotal)
-                    .paidAmount(paidSoFar)               // ← reflects what was already paid
+                    .paidAmount(paidSoFar)
                     .status(InvoiceStatus.DRAFT)
-                    .paymentStatus(proformaPaymentStatus) // ← correct status
+                    .paymentStatus(proformaPaymentStatus)
+                    .currency(savedReservation.getCurrency())
                     .reservation(savedReservation)
                     .user(savedReservation.getUser())
                     .build();
@@ -499,7 +596,6 @@ public class ReservationServiceImpl implements ReservationService {
         if (request.getGroupLeaderName() != null) reservation.setGroupLeaderName(request.getGroupLeaderName());
         if (request.getDemandeSpecial()  != null) reservation.setDemandeSpecial(request.getDemandeSpecial());
         if (request.getPromoCode()       != null) reservation.setPromoCode(request.getPromoCode());
-        if (request.getCurrency()        != null) reservation.setCurrency(request.getCurrency());
         if (request.getNumberOfAdults()   != null) reservation.setNumberOfAdults(request.getNumberOfAdults());
         if (request.getNumberOfChildren() != null) reservation.setNumberOfChildren(request.getNumberOfChildren());
 
@@ -662,6 +758,382 @@ public class ReservationServiceImpl implements ReservationService {
     @Transactional(readOnly = true)
     public List<ReservationResponse> searchReservationsByName(String name) {
         return reservationRepository.searchByUserName(name).stream()
+                .map(this::toEnrichedResponse)
+                .toList();
+    }
+    // ── Staff ─────────────────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public ReservationResponse addStaffToReservation(UUID reservationId, ReservationStaffRequest request) {
+
+        Reservation reservation = findById(reservationId);
+        validateIsTourReservation(reservation);
+        validateStaffManageable(reservation);      // ← ADD
+
+        if ((request.getGuides() == null || request.getGuides().isEmpty()) &&
+                (request.getChauffeurs() == null || request.getChauffeurs().isEmpty())) {
+            throw new RuntimeException("At least one guide or chauffeur must be provided");
+        }
+
+        if (request.getGuides() != null && !request.getGuides().isEmpty()) {
+            request.getGuides().forEach(g -> {
+                Guide guide = Guide.builder()
+                        .firstName(g.getFirstName())
+                        .lastName(g.getLastName())
+                        .phoneNumber(g.getPhoneNumber())
+                        .build();
+                reservation.addGuide(guide);
+            });
+        }
+
+        if (request.getChauffeurs() != null && !request.getChauffeurs().isEmpty()) {
+            request.getChauffeurs().forEach(c -> {
+                Chauffeur chauffeur = Chauffeur.builder()
+                        .firstName(c.getFirstName())
+                        .lastName(c.getLastName())
+                        .phoneNumber(c.getPhoneNumber())
+                        .build();
+                reservation.addChauffeur(chauffeur);
+            });
+        }
+
+        Reservation savedReservation = reservationRepository.save(reservation);
+
+        boolean isActiveReservation = savedReservation.getStatus() == ReservationStatus.CONFIRMED
+                || savedReservation.getStatus() == ReservationStatus.CHECKED_IN;
+
+        if (isActiveReservation) {
+            String guideNames = savedReservation.getGuides().stream()
+                    .map(g -> g.getFirstName() + " " + g.getLastName())
+                    .collect(Collectors.joining(", "));
+            String chauffeurNames = savedReservation.getChauffeurs().stream()
+                    .map(c -> c.getFirstName() + " " + c.getLastName())
+                    .collect(Collectors.joining(", "));
+
+            StringBuilder msg = new StringBuilder("Du personnel a été assigné à votre réservation ")
+                    .append(getReservationLabel(savedReservation)).append(".");
+            if (!guideNames.isEmpty())     msg.append(" Guide(s): ").append(guideNames).append(".");
+            if (!chauffeurNames.isEmpty()) msg.append(" Chauffeur(s): ").append(chauffeurNames).append(".");
+
+            notificationPublisher.publish(
+                    RabbitMQConfig.STAFF_ASSIGNED,
+                    NotificationMessage.builder()
+                            .targetUserId(savedReservation.getUser().getUserId())
+                            .type(NotificationType.STAFF_ASSIGNED)
+                            .reservationId(savedReservation.getReservationId())
+                            .title("Personnel assigné")
+                            .message(msg.toString())
+                            .build()
+            );
+        }
+
+        return toEnrichedResponse(savedReservation);
+    }
+
+// ── Guide management ──────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public ReservationResponse updateGuide(UUID reservationId, UUID guideId, GuideUpdateRequest request) {
+
+        Reservation reservation = findById(reservationId);
+        validateIsTourReservation(reservation);
+        validateStaffManageable(reservation);      // ← ADD
+
+        Guide guide = reservation.getGuides().stream()
+                .filter(g -> g.getGuideId().equals(guideId))
+                .findFirst()
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Guide not found: " + guideId + " in reservation: " + reservationId));
+
+        if (request.getFirstName()   != null) guide.setFirstName(request.getFirstName());
+        if (request.getLastName()    != null) guide.setLastName(request.getLastName());
+        if (request.getPhoneNumber() != null) guide.setPhoneNumber(request.getPhoneNumber());
+
+        Reservation savedReservation = reservationRepository.save(reservation);
+
+        if (isActiveReservation(savedReservation)) {
+            notificationPublisher.publish(
+                    RabbitMQConfig.STAFF_UPDATED,
+                    NotificationMessage.builder()
+                            .targetUserId(savedReservation.getUser().getUserId())
+                            .type(NotificationType.STAFF_UPDATED)
+                            .reservationId(savedReservation.getReservationId())
+                            .title("Personnel modifié")
+                            .message("Le guide de votre réservation "
+                                    + getReservationLabel(savedReservation) + " a été mis à jour.")
+                            .build()
+            );
+        }
+
+        return toEnrichedResponse(savedReservation);
+    }
+
+    @Override
+    @Transactional
+    public String deleteGuide(UUID reservationId, UUID guideId) {
+
+        Reservation reservation = findById(reservationId);
+        validateIsTourReservation(reservation);
+        validateStaffManageable(reservation);      // ← ADD
+
+        Guide guide = reservation.getGuides().stream()
+                .filter(g -> g.getGuideId().equals(guideId))
+                .findFirst()
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Guide not found: " + guideId + " in reservation: " + reservationId));
+
+        String guideName = guide.getFirstName() + " " + guide.getLastName();
+        reservation.removeGuide(guide);
+        Reservation savedReservation = reservationRepository.save(reservation);
+
+        if (isActiveReservation(savedReservation)) {
+            notificationPublisher.publish(
+                    RabbitMQConfig.STAFF_UPDATED,
+                    NotificationMessage.builder()
+                            .targetUserId(savedReservation.getUser().getUserId())
+                            .type(NotificationType.STAFF_UPDATED)
+                            .reservationId(savedReservation.getReservationId())
+                            .title("Personnel modifié")
+                            .message("Le guide " + guideName + " a été retiré de votre réservation "
+                                    + getReservationLabel(savedReservation) + ".")
+                            .build()
+            );
+        }
+
+        return "Guide deleted successfully";
+    }
+
+// ── Chauffeur management ──────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public ReservationResponse updateChauffeur(UUID reservationId, UUID chauffeurId, ChauffeurUpdateRequest request) {
+
+        Reservation reservation = findById(reservationId);
+        validateIsTourReservation(reservation);
+        validateStaffManageable(reservation);      // ← ADD
+
+        Chauffeur chauffeur = reservation.getChauffeurs().stream()
+                .filter(c -> c.getChauffeurId().equals(chauffeurId))
+                .findFirst()
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Chauffeur not found: " + chauffeurId + " in reservation: " + reservationId));
+
+        if (request.getFirstName()   != null) chauffeur.setFirstName(request.getFirstName());
+        if (request.getLastName()    != null) chauffeur.setLastName(request.getLastName());
+        if (request.getPhoneNumber() != null) chauffeur.setPhoneNumber(request.getPhoneNumber());
+
+        Reservation savedReservation = reservationRepository.save(reservation);
+
+        if (isActiveReservation(savedReservation)) {
+            notificationPublisher.publish(
+                    RabbitMQConfig.STAFF_UPDATED,
+                    NotificationMessage.builder()
+                            .targetUserId(savedReservation.getUser().getUserId())
+                            .type(NotificationType.STAFF_UPDATED)
+                            .reservationId(savedReservation.getReservationId())
+                            .title("Personnel modifié")
+                            .message("Le chauffeur de votre réservation "
+                                    + getReservationLabel(savedReservation) + " a été mis à jour.")
+                            .build()
+            );
+        }
+
+        return toEnrichedResponse(savedReservation);
+    }
+
+    @Override
+    @Transactional
+    public String deleteChauffeur(UUID reservationId, UUID chauffeurId) {
+
+        Reservation reservation = findById(reservationId);
+        validateIsTourReservation(reservation);
+        validateStaffManageable(reservation);      // ← ADD
+
+        Chauffeur chauffeur = reservation.getChauffeurs().stream()
+                .filter(c -> c.getChauffeurId().equals(chauffeurId))
+                .findFirst()
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Chauffeur not found: " + chauffeurId + " in reservation: " + reservationId));
+
+        String chauffeurName = chauffeur.getFirstName() + " " + chauffeur.getLastName();
+        reservation.removeChauffeur(chauffeur);
+        Reservation savedReservation = reservationRepository.save(reservation);
+
+        if (isActiveReservation(savedReservation)) {
+            notificationPublisher.publish(
+                    RabbitMQConfig.STAFF_UPDATED,
+                    NotificationMessage.builder()
+                            .targetUserId(savedReservation.getUser().getUserId())
+                            .type(NotificationType.STAFF_UPDATED)
+                            .reservationId(savedReservation.getReservationId())
+                            .title("Personnel modifié")
+                            .message("Le chauffeur " + chauffeurName + " a été retiré de votre réservation "
+                                    + getReservationLabel(savedReservation) + ".")
+                            .build()
+            );
+        }
+
+        return "Chauffeur deleted successfully";
+    }
+
+// ── Private helpers ───────────────────────────────────────────────────────────
+
+    private void validateIsTourReservation(Reservation reservation) {
+        if (reservation.getReservationType() != ReservationType.TOURS) {
+            throw new IllegalStateException(
+                    "Staff (guides and chauffeurs) can only be managed on TOURS reservations. " +
+                            "Current type: " + reservation.getReservationType());
+        }
+    }
+
+    private void validateStaffManageable(Reservation reservation) {
+        ReservationStatus status = reservation.getStatus();
+        if (status == ReservationStatus.CANCELLED ||
+                status == ReservationStatus.REJECTED  ||
+                status == ReservationStatus.COMPLETED) {
+            throw new IllegalStateException(
+                    "Le personnel ne peut pas être modifié pour une réservation "
+                            + status.name().toLowerCase() + ".");
+        }
+    }
+
+    private boolean isActiveReservation(Reservation reservation) {
+        return reservation.getStatus() == ReservationStatus.CONFIRMED
+                || reservation.getStatus() == ReservationStatus.CHECKED_IN;
+    }
+
+    private String getReservationLabel(Reservation reservation) {
+        return reservation.getGroupName() != null
+                ? "\"" + reservation.getGroupName() + "\""
+                : "#" + reservation.getReservationId().toString().substring(0, 8).toUpperCase();
+    }
+
+    private void applyReservationCurrencyConversion(Reservation reservation, Currency targetCurrency) {
+        double rate = switch (targetCurrency) {
+            case EUR -> CurrencyConfig.TND_TO_EUR;
+            case USD -> CurrencyConfig.TND_TO_USD;
+            case TND -> 1.0;
+        };
+
+        if (reservation.getTotalAmount() != null) {
+            reservation.setTotalAmount(
+                    Math.round(reservation.getTotalAmount() * rate * 100.0) / 100.0
+            );
+        }
+        if (reservation.getTotalExtrasAmount() != null) {
+            reservation.setTotalExtrasAmount(
+                    Math.round(reservation.getTotalExtrasAmount() * rate * 100.0) / 100.0
+            );
+        }
+
+        reservation.setCurrency(targetCurrency);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReservationResponse> getActiveReservations() {
+        LocalDate today = LocalDate.now();
+
+        return reservationRepository.findAllActive().stream()
+                .sorted((a, b) -> {
+                    LocalDate dateA = getRelevantDate(a);
+                    LocalDate dateB = getRelevantDate(b);
+
+                    boolean aIsPast = dateA != null && dateA.isBefore(today);
+                    boolean bIsPast = dateB != null && dateB.isBefore(today);
+
+                    if (aIsPast && !bIsPast) return 1;
+                    if (!aIsPast && bIsPast) return -1;
+
+                    if (dateA == null && dateB == null) return 0;
+                    if (dateA == null) return 1;
+                    if (dateB == null) return -1;
+
+                    return dateA.compareTo(dateB);
+                })
+                .map(this::toEnrichedResponse)
+                .toList();
+    }
+
+    private LocalDate getRelevantDate(Reservation reservation) {
+        return switch (reservation.getReservationType()) {
+            case HEBERGEMENT -> reservation.getCheckInDate();
+            case TOURS, EXTRAS -> reservation.getServiceDate();
+        };
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReservationResponse> getActiveReservationsByDate(LocalDate date) {
+        LocalDate today = LocalDate.now();
+
+        return reservationRepository.findAllActive(date).stream()
+                .sorted((a, b) -> {
+                    LocalDate dateA = getRelevantDate(a);
+                    LocalDate dateB = getRelevantDate(b);
+
+                    boolean aIsPast = dateA != null && dateA.isBefore(today);
+                    boolean bIsPast = dateB != null && dateB.isBefore(today);
+
+                    if (aIsPast && !bIsPast) return 1;
+                    if (!aIsPast && bIsPast) return -1;
+
+                    if (dateA == null && dateB == null) return 0;
+                    if (dateA == null) return 1;
+                    if (dateB == null) return -1;
+
+                    return dateA.compareTo(dateB);
+                })
+                .map(this::toEnrichedResponse)
+                .toList();
+    }
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReservationResponse> getReservationsByDate(LocalDate date) {
+        return reservationRepository.findAllByDate(date)
+                .stream()
+                .map(this::toEnrichedResponse)
+                .toList();
+    }
+    //camping
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReservationResponse> getCampingActiveReservations() {
+        LocalDate today = LocalDate.now();
+        return reservationRepository.findCampingActive(today)
+                .stream()
+                .map(this::toEnrichedResponse)
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReservationResponse> getCampingActiveReservationsByDate(LocalDate date) {
+        return reservationRepository.findCampingActiveByDate(date)
+                .stream()
+                .map(this::toEnrichedResponse)
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReservationResponse> searchCampingReservationsByName(String name) {
+        LocalDate today = LocalDate.now();
+        return reservationRepository.findCampingActiveByName(name, today)
+                .stream()
+                .map(this::toEnrichedResponse)
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ReservationResponse> getCampingReservationsByStatus(ReservationStatus status) {
+        LocalDate today = LocalDate.now();
+        return reservationRepository.findCampingActiveByStatus(status, today)
+                .stream()
                 .map(this::toEnrichedResponse)
                 .toList();
     }
